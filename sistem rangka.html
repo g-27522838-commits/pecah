@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioScan AR: Sistem Rangka Manusia (Sains Sukan T4)</title>
+    
+    <!-- Tailwind CSS untuk penggayaan moden & responsif -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Orbitron (Futuristik/Arked) & Inter (Keterbacaan) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- Google MediaPipe Hands & Drawing Utils (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Tone.js untuk Audio Sintesis Interaktif tanpa fail luar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #030712;
+            color: #f8fafc;
+            overflow: hidden;
+            user-select: none;
+        }
+        .font-arcade {
+            font-family: 'Orbitron', sans-serif;
+        }
+        
+        /* Kesan Kaca Makmal Biometrik */
+        .bio-glass {
+            background: rgba(15, 23, 42, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            box-shadow: 0 0 25px rgba(14, 165, 233, 0.2), inset 0 0 15px rgba(56, 189, 248, 0.1);
+        }
+
+        .bio-glow-text {
+            text-shadow: 0 0 12px rgba(56, 189, 248, 0.8);
+        }
+
+        .bio-btn {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+            border: 1px solid #38bdf8;
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+            transition: all 0.2s ease;
+        }
+        .bio-btn:hover:not(:disabled) {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 25px rgba(56, 189, 248, 0.8);
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+        }
+        .bio-btn:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+        /* Grid Latar Belakang Makmal */
+        .lab-grid {
+            background-size: 40px 40px;
+            background-image: 
+                linear-gradient(to right, rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(56, 189, 248, 0.08) 1px, transparent 1px);
+        }
+
+        /* Animasi Garis Pengimbas */
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100vh); }
+        }
+        .scanner-bar {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+            box-shadow: 0 0 15px #38bdf8;
+            opacity: 0.4;
+            animation: scanline 6s linear infinite;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        /* Custom Scrollbar untuk Analisis Jawapan */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); }
+        ::-webkit-scrollbar-thumb { background: #0284c7; border-radius: 3px; }
+    </style>
+</head>
+<body class="w-screen h-screen relative flex items-center justify-center lab-grid">
+
+    <!-- Video Webcam Tersembunyi (Sumber Input MediaPipe) -->
+    <video id="input_video" class="hidden" playsinline></video>
+
+    <!-- Kanvas Utama Permainan & Render AR -->
+    <canvas id="game_canvas" class="absolute inset-0 w-full h-full object-cover z-0"></canvas>
+
+    <!-- Kesan Garis Pengimbas Hologram -->
+    <div class="scanner-bar"></div>
+
+    <!-- ===================================================================== -->
+    <!-- HUD PERMAINAN (PAPARAN ATAS SEMASA BERMAIN)                           -->
+    <!-- ===================================================================== -->
+    <div id="hud_layer" class="hidden absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-3 sm:p-5">
+        
+        <!-- Bar Status Atas: Skor, Pemasa, Kombo & Status Kamera -->
+        <div class="flex flex-wrap items-start justify-between gap-2 w-full">
+            <!-- Kiri: Skor & Kombo -->
+            <div class="bio-glass rounded-xl px-4 py-2 flex items-center gap-4">
+                <div>
+                    <div class="text-[10px] sm:text-xs text-sky-400 font-arcade tracking-wider uppercase">SKOR BIOMETRIK</div>
+                    <div id="hud_score" class="text-xl sm:text-3xl font-arcade font-bold text-white bio-glow-text">0</div>
+                </div>
+                <div class="h-8 w-[1px] bg-sky-500/30"></div>
+                <div>
+                    <div class="text-[10px] sm:text-xs text-amber-400 font-arcade tracking-wider uppercase">KOMBO</div>
+                    <div id="hud_combo" class="text-lg sm:text-2xl font-arcade font-bold text-amber-300">x1</div>
+                </div>
+            </div>
+
+            <!-- Tengah: Kad Soalan Aktif -->
+            <div class="bio-glass rounded-2xl px-4 py-3 max-w-2xl w-full md:w-auto flex-1 mx-auto text-center border-2 border-sky-400/60 shadow-lg order-3 md:order-2 mt-1 md:mt-0">
+                <div class="flex items-center justify-center gap-2 mb-1">
+                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span id="question_category" class="text-xs font-arcade text-sky-300 uppercase tracking-widest">SASARAN ANATOMI</span>
+                </div>
+                <h2 id="question_text" class="text-sm sm:text-lg md:text-xl font-bold text-white leading-snug">
+                    Memuatkan pangkalan data rangka...
+                </h2>
+            </div>
+
+            <!-- Kanan: Pemasa Undur 60 Saat & Butang Kawalan -->
+            <div class="bio-glass rounded-xl px-4 py-2 flex items-center gap-3 order-2 md:order-3">
+                <div class="text-right">
+                    <div class="text-[10px] sm:text-xs text-rose-400 font-arcade tracking-wider uppercase">MASA</div>
+                    <div id="hud_timer" class="text-xl sm:text-3xl font-arcade font-bold text-white">60s</div>
+                </div>
+                <button id="btn_quit_early" class="pointer-events-auto p-2 rounded-lg bg-slate-800/80 hover:bg-rose-900/80 border border-slate-600 text-slate-300 hover:text-white transition" title="Tamatkan Sesi">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Petunjuk Isyarat Bawah -->
+        <div class="flex justify-center items-center">
+            <div id="gesture_status_pill" class="bio-glass rounded-full px-4 py-1.5 text-xs sm:text-sm font-medium text-sky-200 flex items-center gap-2">
+                <span id="hand_indicator" class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                <span id="gesture_hint_text">Halakan jari telunjuk ke nod jawapan & buat isyarat PINCH / GENGGAM</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- SKRIN MULA & PANDUAN ISYARAT (START MENU)                             -->
+    <!-- ===================================================================== -->
+    <div id="start_screen" class="absolute inset-0 z-20 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+        <div class="bio-glass rounded-3xl max-w-3xl w-full p-6 sm:p-8 text-center relative overflow-hidden">
+            
+            <!-- Lencana Silibus -->
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/20 border border-sky-400/40 text-sky-300 text-xs font-arcade mb-3">
+                <span>SAINS SUKAN TINGKATAN 4</span>
+                <span>•</span>
+                <span>SISTEM RANGKA MANUSIA</span>
+            </div>
+
+            <h1 class="text-3xl sm:text-5xl font-arcade font-black text-white tracking-tight mb-2 bio-glow-text">
+                BIOSCAN <span class="text-sky-400">AR</span>
+            </h1>
+            <p class="text-slate-300 text-sm sm:text-base max-w-xl mx-auto mb-6">
+                Imbas, kenal pasti nama saintifik tulang & klasifikasi bentuk tulang menggunakan pengesan laser jari telunjuk masa nyata!
+            </p>
+
+            <!-- Panduan 3 Langkah Interaktif -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 text-left">
+                <!-- Langkah 1 -->
+                <div class="bg-slate-900/70 border border-sky-500/25 rounded-2xl p-4 flex flex-col items-center text-center">
+                    <div class="w-12 h-12 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-2xl mb-2">
+                        ☝️
+                    </div>
+                    <h3 class="font-arcade text-xs sm:text-sm font-bold text-sky-300 mb-1">1. HALAKAN LASER</h3>
+                    <p class="text-xs text-slate-300">Angkat tangan di hadapan kamera. Hujung jari telunjuk bertindak sebagai penuding laser biru.</p>
+                </div>
+
+                <!-- Langkah 2 -->
+                <div class="bg-slate-900/70 border border-sky-500/25 rounded-2xl p-4 flex flex-col items-center text-center">
+                    <div class="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-2xl mb-2">
+                        🤏
+                    </div>
+                    <h3 class="font-arcade text-xs sm:text-sm font-bold text-emerald-300 mb-1">2. PINCH / GENGGAM</h3>
+                    <p class="text-xs text-slate-300">Sentuh ibu jari & jari telunjuk (Pinch) atau genggam tangan pada nod holografik jawapan yang betul.</p>
+                </div>
+
+                <!-- Langkah 3 -->
+                <div class="bg-slate-900/70 border border-sky-500/25 rounded-2xl p-4 flex flex-col items-center text-center">
+                    <div class="w-12 h-12 rounded-full bg-amber-500/20 border border-amber-400 flex items-center justify-center text-2xl mb-2">
+                        ⚡
+                    </div>
+                    <h3 class="font-arcade text-xs sm:text-sm font-bold text-amber-300 mb-1">3. SKOR & KOMBO 60s</h3>
+                    <p class="text-xs text-slate-300">Jawab sepantas mungkin dalam 60 saat untuk menggandakan kombo dan menguji ketepatan anatomi anda!</p>
+                </div>
+            </div>
+
+            <!-- Status Kamera & Butang Mula -->
+            <div class="flex flex-col items-center gap-3">
+                <div id="camera_status_box" class="text-xs sm:text-sm text-amber-300 flex items-center gap-2 bg-amber-950/40 border border-amber-500/30 px-4 py-2 rounded-xl">
+                    <svg class="animate-spin h-4 w-4 text-amber-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span id="camera_status_text">Memulakan sistem pengesan kamera & MediaPipe AI...</span>
+                </div>
+
+                <div class="flex flex-wrap justify-center gap-3 w-full">
+                    <button id="btn_start_game" disabled class="bio-btn px-8 py-3.5 rounded-2xl font-arcade font-bold text-white text-base sm:text-lg tracking-wider disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                        <span>MULA IMBASAN AR</span>
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                    </button>
+                    
+                    <!-- Mod Sandaran Tetikus/Sentuhan jika pengguna tiada kamera -->
+                    <button id="btn_mouse_mode" class="hidden px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-500 text-slate-200 font-arcade text-xs sm:text-sm transition">
+                        MOD SIMULASI TETIKUS / SENTUH
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- SKRIN KEPUTUSAN & ANALISIS JAWAPAN (RESULT SCREEN)                    -->
+    <!-- ===================================================================== -->
+    <div id="result_screen" class="hidden absolute inset-0 z-30 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-lg">
+        <div class="bio-glass rounded-3xl max-w-3xl w-full max-h-[90vh] flex flex-col p-6 sm:p-8">
+            
+            <!-- Kepala Keputusan -->
+            <div class="text-center mb-4">
+                <div class="text-xs font-arcade text-sky-400 tracking-widest uppercase mb-1">LAPORAN DIAGNOSTIK ANATOMI</div>
+                <h2 class="text-2xl sm:text-4xl font-arcade font-black text-white bio-glow-text">IMBASAN TAMAT</h2>
+            </div>
+
+            <!-- Statistik Utama -->
+            <div class="grid grid-cols-3 gap-3 mb-5">
+                <div class="bg-slate-900/80 border border-sky-500/30 rounded-2xl p-3 text-center">
+                    <div class="text-[10px] sm:text-xs text-slate-400 font-arcade">SKOR AKHIR</div>
+                    <div id="res_score" class="text-xl sm:text-3xl font-arcade font-bold text-sky-400">0</div>
+                </div>
+                <div class="bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-3 text-center">
+                    <div class="text-[10px] sm:text-xs text-slate-400 font-arcade">KETEPATAN</div>
+                    <div id="res_accuracy" class="text-xl sm:text-3xl font-arcade font-bold text-emerald-400">0%</div>
+                </div>
+                <div class="bg-slate-900/80 border border-amber-500/30 rounded-2xl p-3 text-center">
+                    <div class="text-[10px] sm:text-xs text-slate-400 font-arcade">KOMBO MAKS</div>
+                    <div id="res_max_combo" class="text-xl sm:text-3xl font-arcade font-bold text-amber-400">x1</div>
+                </div>
+            </div>
+
+            <!-- Senarai Analisis Jawapan -->
+            <div class="text-xs font-arcade text-sky-300 uppercase tracking-wider mb-2 flex justify-between items-center">
+                <span>ANALISIS JAWAPAN PELAJAR</span>
+                <span id="res_summary_count" class="text-slate-400">0/0 Betul</span>
+            </div>
+            
+            <div id="answer_analysis_list" class="flex-1 overflow-y-auto space-y-2.5 pr-1 mb-5">
+                <!-- Item analisis akan dijana secara dinamik oleh JS -->
+            </div>
+
+            <!-- Butang Main Semula -->
+            <div class="flex justify-center">
+                <button id="btn_restart_game" class="bio-btn px-8 py-3 rounded-2xl font-arcade font-bold text-white text-sm sm:text-base tracking-wider flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    <span>ULANG IMBASAN BARU</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- LOGIK PERMAINAN, MEDIAPIPE HANDS, AUDIO & ZARAH BIOMETRIK             -->
+    <!-- ===================================================================== -->
+    <script>
+        /**
+         * PANGKALAN DATA SOALAN SAINS SUKAN TINGKATAN 4: SISTEM RANGKA MANUSIA
+         * Meliputi Nama Saintifik Tulang & Pengelasan Jenis Tulang (Panjang, Pendek, Leper, Tidak Sama Bentuk)
+         */
+        const SKELETAL_QUESTIONS = [
+            // --- NAMA SAINTIFIK TULANG & LOKASI ---
+            {
+                category: "NAMA SAINTIFIK • BAHAGIAN BAWAH",
+                prompt: "Tulang terpanjang dan terkuat pada bahagian paha manusia.",
+                answer: "Femur",
+                distractors: ["Tibia", "Humerus", "Fibula"],
+                explanation: "Femur ialah tulang paha yang menyokong keseluruhan berat badan semasa berdiri dan bergerak."
+            },
+            {
+                category: "NAMA SAINTIFIK • BAHAGIAN ATAS",
+                prompt: "Tulang panjang pada bahagian lengan atas antara bahu dan siku.",
+                answer: "Humerus",
+                distractors: ["Radius", "Ulna", "Klavikel"],
+                explanation: "Humerus bersendi dengan skapula di bahu serta radius dan ulna di siku."
+            },
+            {
+                category: "NAMA SAINTIFIK • TULANG KERING",
+                prompt: "Tulang utama yang lebih besar dan menanggung beban pada bahagian betis.",
+                answer: "Tibia",
+                distractors: ["Fibula", "Femur", "Tarsal"],
+                explanation: "Tibia (tulang kering) terletak di bahagian medial betis dan menampung berat badan."
+            },
+            {
+                category: "NAMA SAINTIFIK • SENDI LUTUT",
+                prompt: "Tulang tempurung lutut yang melindungi sendi lutut di bahagian hadapan.",
+                answer: "Patela",
+                distractors: ["Karpal", "Skapula", "Sternum"],
+                explanation: "Patela ialah tulang sesamoid yang melindungi permukaan sendi lutut."
+            },
+            {
+                category: "NAMA SAINTIFIK • LENGKUNGAN PEKTORAL",
+                prompt: "Dikenali sebagai tulang selangka yang menyambungkan sternum dengan skapula.",
+                answer: "Klavikel",
+                distractors: ["Skapula", "Humerus", "Vertebra"],
+                explanation: "Klavikel menstabilkan bahu dan membolehkan pergerakan lengan yang bebas."
+            },
+            {
+                category: "NAMA SAINTIFIK • RANGKA PAKSI",
+                prompt: "Tulang dada leper di bahagian tengah hadapan sangkar toraks.",
+                answer: "Sternum",
+                distractors: ["Skapula", "Klavikel", "Pelvis"],
+                explanation: "Sternum melindungi jantung dan paru-paru serta menjadi tempat pelekatan tulang rusuk."
+            },
+            {
+                category: "NAMA SAINTIFIK • BAHAGIAN BELAKANG",
+                prompt: "Tulang belikat berbentuk segi tiga leper di bahagian belakang bahu.",
+                answer: "Skapula",
+                distractors: ["Klavikel", "Sternum", "Humerus"],
+                explanation: "Skapula menyediakan permukaan luas untuk pelekatan otot-otot bahu."
+            },
+            {
+                category: "NAMA SAINTIFIK • LENGAN BAWAH",
+                prompt: "Tulang lengan bawah yang selari dengan ibu jari apabila tapak tangan menghadap ke atas.",
+                answer: "Radius",
+                distractors: ["Ulna", "Humerus", "Karpal"],
+                explanation: "Radius berada di sisi lateral (ibu jari) lengan bawah."
+            },
+            {
+                category: "NAMA SAINTIFIK • LENGAN BAWAH",
+                prompt: "Tulang lengan bawah yang lebih panjang di bahagian jari kelengkeng.",
+                answer: "Ulna",
+                distractors: ["Radius", "Fibula", "Tibia"],
+                explanation: "Ulna membentuk sendi engsel utama bersama humerus di bahagian siku."
+            },
+            {
+                category: "NAMA SAINTIFIK • BETIS",
+                prompt: "Tulang halus di bahagian luar (lateral) betis yang menstabilkan buku lali.",
+                answer: "Fibula",
+                distractors: ["Tibia", "Femur", "Metatarsal"],
+                explanation: "Fibula berfungsi sebagai tempat pelekatan otot dan penstabil buku lali."
+            },
+
+            // --- PENGELASAN JENIS TULANG (4 KLASIFIKASI UTAMA) ---
+            {
+                category: "KLASIFIKASI BENTUK TULANG",
+                prompt: "Pengelasan bentuk tulang bagi Femur, Humerus, Tibia dan Falanks.",
+                answer: "Tulang Panjang",
+                distractors: ["Tulang Pendek", "Tulang Leper", "Tulang Tidak Sama Bentuk"],
+                explanation: "Tulang panjang bertindak sebagai tuas untuk menghasilkan pergerakan pantas."
+            },
+            {
+                category: "KLASIFIKASI BENTUK TULANG",
+                prompt: "Pengelasan bentuk tulang bagi Karpal (pergelangan tangan) dan Tarsal (pergelangan kaki).",
+                answer: "Tulang Pendek",
+                distractors: ["Tulang Panjang", "Tulang Leper", "Tulang Tidak Sama Bentuk"],
+                explanation: "Tulang pendek berbentuk kiub, memindahkan daya dan memberi sokongan kukuh."
+            },
+            {
+                category: "KLASIFIKASI BENTUK TULANG",
+                prompt: "Pengelasan bentuk tulang bagi Kranium, Sternum, Skapula dan Tulang Rusuk.",
+                answer: "Tulang Leper",
+                distractors: ["Tulang Panjang", "Tulang Pendek", "Tulang Tidak Sama Bentuk"],
+                explanation: "Tulang leper melindungi organ dalaman lembut dan menyediakan luas permukaan pelekatan otot."
+            },
+            {
+                category: "KLASIFIKASI BENTUK TULANG",
+                prompt: "Pengelasan bentuk tulang bagi Turus Vertebra dan Tulang Pelvis.",
+                answer: "Tulang Tidak Sama Bentuk",
+                distractors: ["Tulang Leper", "Tulang Pendek", "Tulang Panjang"],
+                explanation: "Tulang tidak sama bentuk mempunyai struktur kompleks untuk melindungi saraf tunjang dan menyokong badan."
+            },
+            {
+                category: "FUNGSI & KLASIFIKASI",
+                prompt: "Jenis tulang yang bertindak sebagai tuas utama dalam aktiviti larian dan lompatan.",
+                answer: "Tulang Panjang",
+                distractors: ["Tulang Leper", "Tulang Pendek", "Tulang Tidak Sama Bentuk"],
+                explanation: "Tulang panjang seperti femur dan tibia membolehkan julat pergerakan yang luas."
+            },
+            {
+                category: "FUNGSI & KLASIFIKASI",
+                prompt: "Jenis tulang yang berfungsi utama melindungi otak dan organ dalaman toraks.",
+                answer: "Tulang Leper",
+                distractors: ["Tulang Pendek", "Tulang Panjang", "Tulang Tidak Sama Bentuk"],
+                explanation: "Kranium melindungi otak manakala sternum dan rusuk melindungi jantung serta paru-paru."
+            },
+            {
+                category: "ANATOMI TANGAN & KAKI",
+                prompt: "Tulang-tulang kecil pada bahagian jari tangan dan jari kaki.",
+                answer: "Falanks",
+                distractors: ["Karpal", "Tarsal", "Patela"],
+                explanation: "Falanks terdiri daripada tulang panjang bersaiz kecil pada setiap jari."
+            },
+            {
+                category: "RANGKA PAKSI",
+                prompt: "Rangkaian 33 ruas tulang yang melindungi saraf tunjang manusia.",
+                answer: "Vertebra",
+                distractors: ["Sternum", "Klavikel", "Skapula"],
+                explanation: "Turus vertebra terbahagi kepada serviks, toraks, lumbar, sakrum dan koksiks."
+            }
+        ];
+
+        // =========================================================================
+        // PEMBOLEHUBAH GLOBAL & KEADAAN PERMAINAN
+        // =========================================================================
+        const canvas = document.getElementById('game_canvas');
+        const ctx = canvas.getContext('2d');
+        const videoElement = document.getElementById('input_video');
+
+        let gameState = 'MENU'; // 'MENU', 'PLAYING', 'RESULT'
+        let useMouseFallback = false;
+        let cameraReady = false;
+
+        // Statistik Permainan
+        let score = 0;
+        let combo = 1;
+        let maxCombo = 1;
+        let timeLeft = 60;
+        let timerInterval = null;
+        let currentQuestion = null;
+        let questionPool = [];
+        let answerHistory = [];
+
+        // Nod Sasaran Holografik di Skrin
+        let targetNodes = [];
+        let particles = [];
+        let floatingTexts = [];
+        let questionCooldown = false;
+
+        // Penjejakan Tangan & Kursor Laser
+        let pointer = {
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+            active: false,
+            isPinching: false,
+            wasPinching: false,
+            gestureType: 'TIADA', // 'TIADA', 'TERBUKA', 'PINCH', 'GENGGAM'
+            landmarks: null
+        };
+
+        // =========================================================================
+        // SISTEM AUDIO INTERAKTIF (TONE.JS - SINTESIS BUNYI BIOMETRIK)
+        // =========================================================================
+        let audioInitialized = false;
+        let synthCorrect, synthWrong, synthHover, synthTick;
+
+        async function initAudio() {
+            if (audioInitialized) return;
+            try {
+                await Tone.start();
+                // Bunyi Jawapan Betul (Arpeggio Futuristik)
+                synthCorrect = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: "triangle" },
+                    envelope: { attack: 0.01, decay: 0.15, sustain: 0.1, release: 0.3 }
+                }).toDestination();
+                synthCorrect.volume.value = -6;
+
+                // Bunyi Jawapan Salah (Buzzer Rendah)
+                synthWrong = new Tone.Synth({
+                    oscillator: { type: "sawtooth" },
+                    envelope: { attack: 0.01, decay: 0.25, sustain: 0, release: 0.2 }
+                }).toDestination();
+                synthWrong.volume.value = -8;
+
+                // Bunyi Hover / Imbasan Laser
+                synthHover = new Tone.MembraneSynth({
+                    pitchDecay: 0.02,
+                    octaves: 2,
+                    envelope: { attack: 0.005, decay: 0.08, sustain: 0 }
+                }).toDestination();
+                synthHover.volume.value = -16;
+
+                // Bunyi Detik Masa
+                synthTick = new Tone.Synth({
+                    oscillator: { type: "sine" },
+                    envelope: { attack: 0.005, decay: 0.05, sustain: 0 }
+                }).toDestination();
+                synthTick.volume.value = -14;
+
+                audioInitialized = true;
+            } catch (e) {
+                console.warn("Audio tidak dapat dimulakan:", e);
+            }
+        }
+
+        function playSound(type) {
+            if (!audioInitialized) return;
+            const now = Tone.now();
+            try {
+                if (type === 'correct') {
+                    synthCorrect.triggerAttackRelease(["C5", "E5", "G5", "B5"], "16n", now);
+                } else if (type === 'wrong') {
+                    synthWrong.triggerAttackRelease("F2", "8n", now);
+                } else if (type === 'hover') {
+                    synthHover.triggerAttackRelease("C4", "32n", now);
+                } else if (type === 'tick') {
+                    synthTick.triggerAttackRelease("A5", "32n", now);
+                }
+            } catch (err) {}
+        }
+
+        // =========================================================================
+        // PENYEDIAAN KANVAS RESPONSIF
+        // =========================================================================
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (gameState === 'PLAYING' && targetNodes.length > 0) {
+                repositionNodes();
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // =========================================================================
+        // PENGESANAN ISYARAT TANGAN MEDIAPIPE HANDS
+        // =========================================================================
+        function detectHandGesture(landmarks) {
+            // Indeks Landmarks MediaPipe Hands:
+            // 0: Pergelangan Tangan (Wrist)
+            // 4: Hujung Ibu Jari (Thumb Tip)
+            // 8: Hujung Jari Telunjuk (Index Tip), 6: PIP Telunjuk
+            // 12: Hujung Jari Hantu (Middle Tip), 10: PIP Hantu
+            // 16: Hujung Jari Manis (Ring Tip), 14: PIP Manis
+            // 20: Hujung Jari Kelengkeng (Pinky Tip), 18: PIP Kelengkeng
+
+            const wrist = landmarks[0];
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+
+            // Kira jarak Euclidean antara ibu jari dan jari telunjuk (Pinch)
+            const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+            
+            // Saiz rujukan tapak tangan (jarak pergelangan tangan ke pangkal jari hantu)
+            const palmSize = Math.hypot(wrist.x - landmarks[9].x, wrist.y - landmarks[9].y);
+            const normalizedPinch = pinchDist / (palmSize || 0.1);
+
+            // Semak genggaman tangan (Fist): 4 jari utama dilipat ke arah tapak tangan
+            const indexFolded = Math.hypot(landmarks[8].x - wrist.x, landmarks[8].y - wrist.y) < Math.hypot(landmarks[6].x - wrist.x, landmarks[6].y - wrist.y);
+            const middleFolded = Math.hypot(landmarks[12].x - wrist.x, landmarks[12].y - wrist.y) < Math.hypot(landmarks[10].x - wrist.x, landmarks[10].y - wrist.y);
+            const ringFolded = Math.hypot(landmarks[16].x - wrist.x, landmarks[16].y - wrist.y) < Math.hypot(landmarks[14].x - wrist.x, landmarks[14].y - wrist.y);
+            const pinkyFolded = Math.hypot(landmarks[20].x - wrist.x, landmarks[20].y - wrist.y) < Math.hypot(landmarks[18].x - wrist.x, landmarks[18].y - wrist.y);
+
+            const isFist = indexFolded && middleFolded && ringFolded && pinkyFolded;
+            const isPinch = normalizedPinch < 0.36;
+
+            if (isFist) {
+                return { triggered: true, type: 'GENGGAM' };
+            } else if (isPinch) {
+                return { triggered: true, type: 'PINCH' };
+            }
+            return { triggered: false, type: 'IMBAS' };
+        }
+
+        function onHandsResults(results) {
+            if (!cameraReady) {
+                cameraReady = true;
+                const statusBox = document.getElementById('camera_status_box');
+                const statusText = document.getElementById('camera_status_text');
+                const startBtn = document.getElementById('btn_start_game');
+                
+                statusBox.className = "text-xs sm:text-sm text-emerald-300 flex items-center gap-2 bg-emerald-950/50 border border-emerald-500/40 px-4 py-2 rounded-xl";
+                statusBox.innerHTML = `<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span><span>Pengesan Biometrik MediaPipe Sedia!</span>`;
+                startBtn.disabled = false;
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                pointer.landmarks = landmarks;
+                pointer.active = true;
+
+                // Cerminkan koordinat X (1 - x) supaya selari dengan paparan cermin webcam
+                const indexTip = landmarks[8];
+                const targetX = (1 - indexTip.x) * canvas.width;
+                const targetY = indexTip.y * canvas.height;
+
+                // Pelicinan pergerakan laser (Linear Interpolation)
+                pointer.x += (targetX - pointer.x) * 0.45;
+                pointer.y += (targetY - pointer.y) * 0.45;
+
+                const gesture = detectHandGesture(landmarks);
+                pointer.wasPinching = pointer.isPinching;
+                pointer.isPinching = gesture.triggered;
+                pointer.gestureType = gesture.type;
+
+                // Kemas kini indikator HUD
+                updateGestureHUD(true, gesture.type);
+
+                // Jika baru sahaja melakukan isyarat Pinch / Genggam (Edge trigger)
+                if (pointer.isPinching && !pointer.wasPinching && gameState === 'PLAYING') {
+                    checkNodeSelection();
+                }
+            } else {
+                pointer.active = false;
+                pointer.landmarks = null;
+                pointer.isPinching = false;
+                pointer.gestureType = 'TIADA';
+                updateGestureHUD(false, 'TIADA');
+            }
+        }
+
+        function updateGestureHUD(handDetected, type) {
+            const indicator = document.getElementById('hand_indicator');
+            const hintText = document.getElementById('gesture_hint_text');
+            if (!indicator || !hintText) return;
+
+            if (!handDetected) {
+                indicator.className = "w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping";
+                hintText.textContent = "Tangan tidak dikesan — Angkat tangan anda di hadapan kamera";
+            } else if (type === 'PINCH' || type === 'GENGGAM') {
+                indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+                hintText.textContent = `ISYARAT DIKESAN: ${type} AKTIF!`;
+            } else {
+                indicator.className = "w-2.5 h-2.5 rounded-full bg-sky-400";
+                hintText.textContent = "Laser Aktif — Halakan ke nod jawapan & buat PINCH atau GENGGAM";
+            }
+        }
+
+        // Inisialisasi MediaPipe Hands & Kamera
+        async function initMediaPipe() {
+            try {
+                const hands = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.65,
+                    minTrackingConfidence: 0.65
+                });
+
+                hands.onResults(onHandsResults);
+
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                await camera.start();
+            } catch (err) {
+                console.warn("Kamera tidak dapat diakses, mengaktifkan mod sandaran:", err);
+                const statusBox = document.getElementById('camera_status_box');
+                statusBox.className = "text-xs sm:text-sm text-amber-300 flex items-center gap-2 bg-amber-950/60 border border-amber-500/40 px-4 py-2 rounded-xl";
+                statusBox.innerHTML = `<span>⚠️ Kamera tidak ditemui / disekat. Gunakan Mod Simulasi Tetikus di bawah.</span>`;
+                
+                document.getElementById('btn_mouse_mode').classList.remove('hidden');
+            }
+        }
+
+        // Jalankan MediaPipe selepas halaman dimuatkan
+        window.addEventListener('load', initMediaPipe);
+
+        // =========================================================================
+        // MOD SANDARAN TETIKUS / SENTUH (JIKA TIADA WEBCAM)
+        // =========================================================================
+        function enableMouseFallback() {
+            useMouseFallback = true;
+            pointer.active = true;
+
+            window.addEventListener('mousemove', (e) => {
+                if (!useMouseFallback) return;
+                pointer.x = e.clientX;
+                pointer.y = e.clientY;
+                pointer.active = true;
+            });
+
+            window.addEventListener('mousedown', (e) => {
+                if (!useMouseFallback || gameState !== 'PLAYING') return;
+                pointer.x = e.clientX;
+                pointer.y = e.clientY;
+                pointer.isPinching = true;
+                checkNodeSelection();
+            });
+
+            window.addEventListener('mouseup', () => {
+                if (!useMouseFallback) return;
+                pointer.isPinching = false;
+            });
+
+            startGame();
+        }
+
+        // =========================================================================
+        // LOGIK SOALAN & NOD TULANG HOLOGRAFIK
+        // =========================================================================
+        function shuffleArray(arr) {
+            const copy = [...arr];
+            for (let i = copy.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [copy[i], copy[j]] = [copy[j], copy[i]];
+            }
+            return copy;
+        }
+
+        function loadNextQuestion() {
+            questionCooldown = false;
+            if (questionPool.length === 0) {
+                questionPool = shuffleArray(SKELETAL_QUESTIONS);
+            }
+            currentQuestion = questionPool.pop();
+
+            // Paparkan soalan pada HUD
+            document.getElementById('question_category').textContent = currentQuestion.category;
+            document.getElementById('question_text').textContent = currentQuestion.prompt;
+
+            // Sediakan 4 pilihan jawapan
+            const choices = shuffleArray([currentQuestion.answer, ...currentQuestion.distractors]);
+            spawnTargetNodes(choices);
+        }
+
+        function spawnTargetNodes(choices) {
+            targetNodes = [];
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            // Susunan 4 nod strategik mengelilingi ruang tengah (mengelak bertindih dengan HUD atas)
+            const isMobile = w < 640;
+            const positions = isMobile ? [
+                { x: w * 0.28, y: h * 0.42 },
+                { x: w * 0.72, y: h * 0.42 },
+                { x: w * 0.28, y: h * 0.72 },
+                { x: w * 0.72, y: h * 0.72 }
+            ] : [
+                { x: w * 0.22, y: h * 0.44 },
+                { x: w * 0.78, y: h * 0.44 },
+                { x: w * 0.26, y: h * 0.74 },
+                { x: w * 0.74, y: h * 0.74 }
+            ];
+
+            const nodeRadius = isMobile ? Math.min(w * 0.18, 68) : Math.min(w * 0.09, 82);
+
+            choices.forEach((label, idx) => {
+                targetNodes.push({
+                    label: label,
+                    isCorrect: label === currentQuestion.answer,
+                    baseX: positions[idx].x,
+                    baseY: positions[idx].y,
+                    x: positions[idx].x,
+                    y: positions[idx].y,
+                    radius: nodeRadius,
+                    floatOffset: Math.random() * Math.PI * 2,
+                    floatSpeed: 0.025 + Math.random() * 0.015,
+                    hovered: false,
+                    scale: 0, // Animasi muncul membesar
+                    status: 'IDLE' // 'IDLE', 'CORRECT', 'WRONG'
+                });
+            });
+        }
+
+        function repositionNodes() {
+            const w = canvas.width;
+            const h = canvas.height;
+            const isMobile = w < 640;
+            const positions = isMobile ? [
+                { x: w * 0.28, y: h * 0.42 },
+                { x: w * 0.72, y: h * 0.42 },
+                { x: w * 0.28, y: h * 0.72 },
+                { x: w * 0.72, y: h * 0.72 }
+            ] : [
+                { x: w * 0.22, y: h * 0.44 },
+                { x: w * 0.78, y: h * 0.44 },
+                { x: w * 0.26, y: h * 0.74 },
+                { x: w * 0.74, y: h * 0.74 }
+            ];
+            targetNodes.forEach((node, idx) => {
+                if (positions[idx]) {
+                    node.baseX = positions[idx].x;
+                    node.baseY = positions[idx].y;
+                }
+            });
+        }
+
+        // Semak jika laser menyentuh nod semasa isyarat Pinch/Genggam berlaku
+        function checkNodeSelection() {
+            if (questionCooldown || !pointer.active) return;
+
+            // Hasilkan percikan zarah biru pada titik cubitan
+            spawnBiometricParticles(pointer.x, pointer.y, '#38bdf8', 18);
+
+            for (let node of targetNodes) {
+                const dist = Math.hypot(pointer.x - node.x, pointer.y - node.y);
+                // Beri sedikit toleransi jejari (+18px) supaya mesra pengguna
+                if (dist <= node.radius + 18) {
+                    handleAnswerChosen(node);
+                    break;
+                }
+            }
+        }
+
+        function handleAnswerChosen(selectedNode) {
+            questionCooldown = true;
+
+            // Rekodkan untuk analisis akhir
+            answerHistory.push({
+                question: currentQuestion.prompt,
+                category: currentQuestion.category,
+                userAnswer: selectedNode.label,
+                correctAnswer: currentQuestion.answer,
+                isCorrect: selectedNode.isCorrect,
+                explanation: currentQuestion.explanation
+            });
+
+            if (selectedNode.isCorrect) {
+                selectedNode.status = 'CORRECT';
+                playSound('correct');
+
+                const pointsEarned = 100 * combo;
+                score += pointsEarned;
+                combo++;
+                if (combo > maxCombo) maxCombo = combo;
+
+                spawnBiometricParticles(selectedNode.x, selectedNode.y, '#10b981', 45);
+                addFloatingText(`+${pointsEarned}`, selectedNode.x, selectedNode.y - 30, '#34d399');
+            } else {
+                selectedNode.status = 'WRONG';
+                playSound('wrong');
+                combo = 1;
+
+                // Tunjukkan nod mana yang sebenarnya betul
+                targetNodes.forEach(n => {
+                    if (n.isCorrect) n.status = 'CORRECT';
+                });
+
+                spawnBiometricParticles(selectedNode.x, selectedNode.y, '#f43f5e', 40);
+                addFloatingText(`SALAH!`, selectedNode.x, selectedNode.y - 30, '#fb7185');
+            }
+
+            updateHUDStats();
+
+            // Teruskan ke soalan seterusnya selepas jeda singkat
+            setTimeout(() => {
+                if (gameState === 'PLAYING') {
+                    loadNextQuestion();
+                }
+            }, 950);
+        }
+
+        // =========================================================================
+        // SISTEM ZARAH BIOMETRIK & TEKS TERAPUNG
+        // =========================================================================
+        function spawnBiometricParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1.5 + Math.random() * 6;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 2 + Math.random() * 4,
+                    color: color,
+                    alpha: 1,
+                    decay: 0.02 + Math.random() * 0.025
+                });
+            }
+        }
+
+        function addFloatingText(text, x, y, color) {
+            floatingTexts.push({
+                text, x, y, color,
+                alpha: 1,
+                vy: -1.8
+            });
+        }
+
+        // =========================================================================
+        // KAWALAN ALIRAN PERMAINAN (MULA, PEMASA, TAMAT)
+        // =========================================================================
+        async function startGame() {
+            await initAudio();
+
+            score = 0;
+            combo = 1;
+            maxCombo = 1;
+            timeLeft = 60;
+            answerHistory = [];
+            questionPool = shuffleArray(SKELETAL_QUESTIONS);
+            particles = [];
+            floatingTexts = [];
+
+            updateHUDStats();
+
+            document.getElementById('start_screen').classList.add('hidden');
+            document.getElementById('result_screen').classList.add('hidden');
+            document.getElementById('hud_layer').classList.remove('hidden');
+
+            gameState = 'PLAYING';
+            loadNextQuestion();
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                const timerEl = document.getElementById('hud_timer');
+                timerEl.textContent = `${timeLeft}s`;
+
+                if (timeLeft <= 10 && timeLeft > 0) {
+                    timerEl.classList.add('text-rose-400', 'animate-pulse');
+                    playSound('tick');
+                } else {
+                    timerEl.classList.remove('text-rose-400', 'animate-pulse');
+                }
+
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function updateHUDStats() {
+            document.getElementById('hud_score').textContent = score;
+            document.getElementById('hud_combo').textContent = `x${combo}`;
+            document.getElementById('hud_timer').textContent = `${timeLeft}s`;
+        }
+
+        function endGame() {
+            clearInterval(timerInterval);
+            gameState = 'RESULT';
+
+            document.getElementById('hud_layer').classList.add('hidden');
+            document.getElementById('result_screen').classList.remove('hidden');
+
+            // Kira statistik akhir
+            const totalAnswered = answerHistory.length;
+            const correctCount = answerHistory.filter(item => item.isCorrect).length;
+            const accuracy = totalAnswered > 0 ? Math.round((correctCount / totalAnswered) * 100) : 0;
+
+            document.getElementById('res_score').textContent = score;
+            document.getElementById('res_accuracy').textContent = `${accuracy}%`;
+            document.getElementById('res_max_combo').textContent = `x${maxCombo}`;
+            document.getElementById('res_summary_count').textContent = `${correctCount}/${totalAnswered} Tepat`;
+
+            // Bina senarai analisis jawapan
+            const listContainer = document.getElementById('answer_analysis_list');
+            listContainer.innerHTML = '';
+
+            if (answerHistory.length === 0) {
+                listContainer.innerHTML = `
+                    <div class="text-center py-6 text-slate-400 text-sm">
+                        Tiada sasaran diimbas dalam sesi ini. Cuba halakan jari telunjuk anda ke nod jawapan!
+                    </div>
+                `;
+                return;
+            }
+
+            answerHistory.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = `p-3.5 rounded-xl border ${
+                    item.isCorrect 
+                    ? 'bg-emerald-950/30 border-emerald-500/40' 
+                    : 'bg-rose-950/30 border-rose-500/40'
+                }`;
+
+                card.innerHTML = `
+                    <div class="flex items-start justify-between gap-2 mb-1">
+                        <span class="text-xs font-bold text-slate-200">${index + 1}. ${item.question}</span>
+                        <span class="shrink-0 text-[11px] font-arcade px-2 py-0.5 rounded ${
+                            item.isCorrect ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                        }">
+                            ${item.isCorrect ? '✓ TEPAT' : '✕ SALAH'}
+                        </span>
+                    </div>
+                    <div class="text-xs text-slate-300 flex flex-wrap gap-x-4 gap-y-1 mb-1">
+                        <span>Jawapan Anda: <strong class="${item.isCorrect ? 'text-emerald-300' : 'text-rose-300'}">${item.userAnswer}</strong></span>
+                        ${!item.isCorrect ? `<span>Jawapan Sebenar: <strong class="text-emerald-300">${item.correctAnswer}</strong></span>` : ''}
+                    </div>
+                    <p class="text-[11px] text-sky-200/80 italic">💡 ${item.explanation}</p>
+                `;
+                listContainer.appendChild(card);
+            });
+        }
+
+        // Pendengar Acara Butang
+        document.getElementById('btn_start_game').addEventListener('click', startGame);
+        document.getElementById('btn_mouse_mode').addEventListener('click', enableMouseFallback);
+        document.getElementById('btn_restart_game').addEventListener('click', startGame);
+        document.getElementById('btn_quit_early').addEventListener('click', endGame);
+
+        // =========================================================================
+        // GELUNG RENDER UTAMA (WEBCAM + OVERLAY LANDMARKS + NOD HOLOGRAFIK + LASER)
+        // =========================================================================
+        function drawHandSkeletonOverlay(landmarks) {
+            ctx.save();
+            // Cerminkan kanvas supaya selari dengan video webcam
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+
+            // Lukis sambungan tulang tangan biometrik
+            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                color: 'rgba(56, 189, 248, 0.55)',
+                lineWidth: 2.5
+            });
+
+            // Lukis sendi landmarks
+            drawLandmarks(ctx, landmarks, {
+                color: '#e0f2fe',
+                fillColor: '#0284c7',
+                lineWidth: 1,
+                radius: 3.5
+            });
+
+            ctx.restore();
+        }
+
+        function drawHolographicNodes() {
+            targetNodes.forEach(node => {
+                // Animasi terapung lembut & skala muncul
+                node.floatOffset += node.floatSpeed;
+                node.y = node.baseY + Math.sin(node.floatOffset) * 10;
+                if (node.scale < 1) {
+                    node.scale = Math.min(1, node.scale + 0.08);
+                }
+
+                // Semak hover laser
+                const dist = pointer.active ? Math.hypot(pointer.x - node.x, pointer.y - node.y) : 9999;
+                const isHovered = dist <= node.radius + 14;
+                if (isHovered && !node.hovered && gameState === 'PLAYING') {
+                    playSound('hover');
+                }
+                node.hovered = isHovered;
+
+                ctx.save();
+                ctx.translate(node.x, node.y);
+                const activeScale = node.scale * (node.hovered ? 1.08 : 1);
+                ctx.scale(activeScale, activeScale);
+
+                // Tentukan warna tema nod berdasarkan status
+                let primaryColor = '#38bdf8'; // Biru Hologram
+                let bgFill = 'rgba(15, 23, 42, 0.78)';
+                if (node.status === 'CORRECT') {
+                    primaryColor = '#10b981';
+                    bgFill = 'rgba(6, 78, 59, 0.88)';
+                } else if (node.status === 'WRONG') {
+                    primaryColor = '#f43f5e';
+                    bgFill = 'rgba(136, 19, 55, 0.88)';
+                } else if (node.hovered) {
+                    primaryColor = '#7dd3fc';
+                    bgFill = 'rgba(3, 105, 161, 0.85)';
+                }
+
+                // Gelang Luar Berputar (Hologram Ring)
+                ctx.save();
+                ctx.rotate(node.floatOffset * 0.5);
+                ctx.beginPath();
+                ctx.arc(0, 0, node.radius + 6, 0, Math.PI * 2);
+                ctx.strokeStyle = primaryColor;
+                ctx.lineWidth = node.hovered ? 3 : 1.8;
+                ctx.setLineDash([14, 8, 4, 8]);
+                ctx.stroke();
+                ctx.restore();
+
+                // Bulatan Teras Nod
+                ctx.beginPath();
+                ctx.arc(0, 0, node.radius, 0, Math.PI * 2);
+                ctx.fillStyle = bgFill;
+                ctx.shadowColor = primaryColor;
+                ctx.shadowBlur = node.hovered ? 25 : 14;
+                ctx.fill();
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = primaryColor;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+
+                // Ikon Tulang Kecil di Bahagian Atas Nod
+                ctx.fillStyle = primaryColor;
+                ctx.font = 'bold 11px Orbitron, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('◈ NOD SASARAN', 0, -node.radius * 0.45);
+
+                // Teks Jawapan (Bungkus perkataan jika panjang)
+                ctx.fillStyle = '#ffffff';
+                const fontSize = node.label.length > 16 ? 13 : (node.label.length > 10 ? 15 : 17);
+                ctx.font = `bold ${fontSize}px Inter, sans-serif`;
+                wrapCanvasText(ctx, node.label, 0, 4, node.radius * 1.65, fontSize + 4);
+
+                ctx.restore();
+            });
+        }
+
+        function wrapCanvasText(context, text, x, y, maxWidth, lineHeight) {
+            const words = text.split(' ');
+            let line = '';
+            const lines = [];
+
+            for (let n = 0; n < words.length; n++) {
+                const testLine = line + words[n] + ' ';
+                const metrics = context.measureText(testLine);
+                if (metrics.width > maxWidth && n > 0) {
+                    lines.push(line.trim());
+                    line = words[n] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line.trim());
+
+            const startY = y - ((lines.length - 1) * lineHeight) / 2;
+            lines.forEach((l, i) => {
+                context.fillText(l, x, startY + i * lineHeight);
+            });
+        }
+
+        function drawLaserScanner() {
+            if (!pointer.active) return;
+
+            // Jejak zarah biru lembut apabila laser bergerak
+            if (Math.random() < 0.45) {
+                particles.push({
+                    x: pointer.x + (Math.random() - 0.5) * 6,
+                    y: pointer.y + (Math.random() - 0.5) * 6,
+                    vx: (Math.random() - 0.5) * 1.2,
+                    vy: (Math.random() - 0.5) * 1.2,
+                    size: 2.2,
+                    color: pointer.isPinching ? '#34d399' : '#38bdf8',
+                    alpha: 0.85,
+                    decay: 0.04
+                });
+            }
+
+            ctx.save();
+            ctx.translate(pointer.x, pointer.y);
+
+            const laserColor = pointer.isPinching ? '#10b981' : '#38bdf8';
+
+            // Lingkaran sasaran biometrik
+            ctx.beginPath();
+            ctx.arc(0, 0, pointer.isPinching ? 14 : 22, 0, Math.PI * 2);
+            ctx.strokeStyle = laserColor;
+            ctx.lineWidth = 2.5;
+            ctx.shadowColor = laserColor;
+            ctx.shadowBlur = 18;
+            ctx.stroke();
+
+            // Garis silang pengimbas (Crosshair)
+            ctx.beginPath();
+            ctx.moveTo(-28, 0); ctx.lineTo(-10, 0);
+            ctx.moveTo(10, 0); ctx.lineTo(28, 0);
+            ctx.moveTo(0, -28); ctx.lineTo(0, -10);
+            ctx.moveTo(0, 10); ctx.lineTo(0, 28);
+            ctx.strokeStyle = '#e0f2fe';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Titik Teras Laser
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function updateAndDrawParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= p.decay;
+
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fillStyle = p.color;
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur = 8;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Lukis Teks Skor Terapung
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ft = floatingTexts[i];
+                ft.y += ft.vy;
+                ft.alpha -= 0.02;
+
+                if (ft.alpha <= 0) {
+                    floatingTexts.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = ft.alpha;
+                ctx.font = 'bold 22px Orbitron, sans-serif';
+                ctx.fillStyle = ft.color;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#000';
+                ctx.shadowBlur = 6;
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.restore();
+            }
+        }
+
+        function renderLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Lukis Latar Belakang Webcam Masa Nyata (Dicerminkan)
+            if (videoElement.readyState >= 2 && !useMouseFallback) {
+                ctx.save();
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                
+                // Kira nisbah aspek supaya video memenuhi skrin tanpa herotan
+                const vRatio = videoElement.videoWidth / videoElement.videoHeight;
+                const cRatio = canvas.width / canvas.height;
+                let drawW, drawH, offsetX, offsetY;
+
+                if (cRatio > vRatio) {
+                    drawW = canvas.width;
+                    drawH = canvas.width / vRatio;
+                    offsetX = 0;
+                    offsetY = (canvas.height - drawH) / 2;
+                } else {
+                    drawH = canvas.height;
+                    drawW = canvas.height * vRatio;
+                    offsetX = (canvas.width - drawW) / 2;
+                    offsetY = 0;
+                }
+
+                ctx.drawImage(videoElement, offsetX, offsetY, drawW, drawH);
+                ctx.restore();
+
+                // Lapisan tint gelap makmal supaya nod holografik & teks jelas dibaca
+                ctx.fillStyle = 'rgba(2, 6, 23, 0.48)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            } else {
+                // Latar belakang makmal futuristik jika mod simulasi tetikus digunakan
+                const grad = ctx.createRadialGradient(
+                    canvas.width / 2, canvas.height / 2, 50,
+                    canvas.width / 2, canvas.height / 2, canvas.width * 0.7
+                );
+                grad.addColorStop(0, '#0f172a');
+                grad.addColorStop(1, '#020617');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // 2. Lukis Overlay Landmarks Tangan MediaPipe
+            if (pointer.landmarks && !useMouseFallback) {
+                drawHandSkeletonOverlay(pointer.landmarks);
+            }
+
+            // 3. Lukis Nod Tulang Holografik & Kesan Interaktif
+            if (gameState === 'PLAYING') {
+                drawHolographicNodes();
+            }
+
+            // 4. Lukis Zarah Biometrik & Pengimbas Laser Jari Telunjuk
+            updateAndDrawParticles();
+            if (gameState === 'PLAYING') {
+                drawLaserScanner();
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        // Mulakan gelung animasi sebaik sahaja tetingkap sedia
+        window.onload = function() {
+            renderLoop();
+        };
+    </script>
+</body>
+</html>
